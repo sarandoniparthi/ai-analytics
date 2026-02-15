@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import time
 from typing import Any
 
@@ -15,7 +14,7 @@ from .db import (
     retrieve_rag_context,
     update_query_audit_log,
 )
-from .sql_validator import extract_views, validate_sql
+from .sql_validator import extract_views
 from .types import (
     ExplainPayload,
     MetaPayload,
@@ -25,14 +24,8 @@ from .types import (
     SqlPayload,
 )
 from .workflow import (
+    AgnoAnalyticsWorkflow,
     DBTool,
-    InsightAgent,
-    KnowledgeAgent,
-    NarratorAgent,
-    PlannerAgent,
-    SQLAgent,
-    SchemaRagAgent,
-    Validator,
     WidgetAgent,
 )
 
@@ -41,13 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 app = FastAPI(title="agno-python")
 
-schema_rag_agent = SchemaRagAgent()
-sql_agent = SQLAgent()
-validator_agent = Validator()
-insight_agent = InsightAgent()
-narrator_agent = NarratorAgent()
-knowledge_agent = KnowledgeAgent()
-planner_agent = PlannerAgent()
+agno_workflow = AgnoAnalyticsWorkflow()
 db_tool = DBTool()
 widget_agent = WidgetAgent()
 conversation_memory = ConversationMemory(max_messages=8)
@@ -104,17 +91,6 @@ def _question_wants_widget(question: str, widget_type: str) -> bool:
     if widget_type == "line":
         return "line chart" in q or "line" in q or "trend" in q
     return False
-
-
-def _apply_known_view_fixes(sql: str) -> str:
-    fixed = sql
-    lowered = sql.lower()
-    if "v_customer_masked" in lowered:
-        fixed = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\.first_name\b", r"\1.first_name_masked", fixed)
-        fixed = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\.last_name\b", r"\1.last_name_masked", fixed)
-        fixed = re.sub(r"\bfirst_name\b(?!_masked)", "first_name_masked", fixed)
-        fixed = re.sub(r"\blast_name\b(?!_masked)", "last_name_masked", fixed)
-    return fixed
 
 
 def build_widgets(
@@ -330,8 +306,6 @@ def run_query(
         rag_start = time.perf_counter()
         rag_docs = retrieve_rag_context(payload.question, k=5)
         rag_ms = int((time.perf_counter() - rag_start) * 1000)
-        rag_context = schema_rag_agent.run(rag_docs)
-        knowledge_context = knowledge_agent.run(rag_docs)
         add_query_audit_event(
             audit_log_id,
             stage,
@@ -348,19 +322,19 @@ def run_query(
             rag_ms=rag_ms,
         )
 
-        plan = planner_agent.run(payload.question)
+        full_context, plan = agno_workflow.build_context_and_plan(payload.question, rag_docs)
         history = conversation_memory.get_messages(payload.conversation_id)
         stage = "llm_generation"
         llm_start = time.perf_counter()
-        sql_payload, assistant_artifact = sql_agent.run(
+        sql_payload, assistant_artifact = agno_workflow.generate_sql(
             payload.question,
             payload.user_context.allowed_views,
-            f"{rag_context}\nKnowledge:\n{knowledge_context}",
+            full_context,
             active_model,
             conversation_history=history,
         )
         llm_ms = int((time.perf_counter() - llm_start) * 1000)
-        used_model = sql_agent.last_model_used or active_model
+        used_model = agno_workflow.last_model_used or active_model
         llm_usage = assistant_artifact.get("usage") if assistant_artifact else {}
         if not isinstance(llm_usage, dict):
             llm_usage = {}
@@ -396,9 +370,7 @@ def run_query(
 
         stage = "validation"
         validation_start = time.perf_counter()
-        candidate_sql = validator_agent.run(sql_payload["query"])
-        validated_sql, views_used = validate_sql(candidate_sql, payload.user_context.allowed_views)
-        executable_sql = _apply_known_view_fixes(validated_sql)
+        executable_sql, views_used = agno_workflow.validate_sql(sql_payload, payload.user_context.allowed_views)
         validation_ms = int((time.perf_counter() - validation_start) * 1000)
         update_query_audit_log(
             audit_log_id,
@@ -485,7 +457,7 @@ def run_query(
     exec_ms = int((time.perf_counter() - db_start) * 1000)
     add_query_audit_event(audit_log_id, stage, "ok", "SQL executed", duration_ms=exec_ms, metadata={"rows": len(rows)})
 
-    answer = narrator_agent.run(insight_agent.run(rows, columns), payload.question)
+    answer = agno_workflow.build_answer(rows, columns, payload.question)
     widgets = build_widgets(rows, columns, payload.question, rag_docs)
     _ = widget_agent.run()
 

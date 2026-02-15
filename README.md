@@ -12,6 +12,65 @@ This project starts with the PostgreSQL Pagila sample database and extends it in
 It adds role-aware access control, scoped analytics views, JWT-based API authorization, RAG context with pgvector, SQL safety guardrails, and end-to-end audit logging.  
 The result is a practical reference architecture for turning sample relational data into a secure AI analytics workflow.
 
+## Project Context
+
+### Business Use Case
+
+From sample DVD rental data to a multi-role analytics assistant:
+- `admin`: cross-store revenue, rental, and masked customer analysis
+- `store_manager`: store-level payments and rentals for assigned stores
+- `marketing`: masked customer segmentation/trends without payment-level exposure
+- `finance`: payment and revenue-focused reporting
+
+### Data Model Extensions Over Pagila
+
+Added on top of sample schema:
+- Scoped views: `v_payment_scoped`, `v_rental_scoped`, `v_customer_masked`
+- RAG store: `rag_documents` (pgvector embeddings)
+- Access control: `app_users`, `app_user_store_access`
+- Audit/trace: `query_audit_logs`, `query_audit_events`
+
+### Security Model
+
+- JWT claims used by backend: `user_id`, `role`, `store_ids`, `is_all_stores`
+- Backend enforces store scope for every `/api/ask` request
+- Agno internal endpoint protected by `X-Internal-Token`
+- SQL guardrails enforce:
+  - single statement
+  - `SELECT` / `WITH ... SELECT` only
+  - allowed views only
+  - `LIMIT 200` maximum
+
+### Prompting Strategy
+
+- UI provides role-based prompt suggestions mapped to role-allowed views
+- In-scope prompts are designed to produce safe executable SQL
+- Out-of-scope prompts are blocked with clear validation/scope errors
+
+### RAG Strategy
+
+- Seeded docs include schema hints, metric glossary, governance/safety rules, and widget hints
+- Retrieval context is injected before SQL generation to reduce hallucinations and improve view selection
+
+### Observability and Audit
+
+- `conversation_id` is created at API entry and propagated end-to-end
+- Each workflow stage writes audit events (`rag_retrieval`, `llm_generation`, `validation`, `db_execution`, `completed`)
+- Final response, SQL, timings, and error metadata are persisted for troubleshooting
+
+### Known Limitations
+
+- Free OpenRouter models can hit rate/spend limits (`429` / `402`)
+- SQL generation can still need deterministic fallback/rewrite for edge cases
+- Pagila is sample data and does not represent full production domain complexity
+
+### Production Hardening Next Steps
+
+- Replace seed login with real identity provider (OIDC/SAML) and RBAC service
+- Introduce explicit org/tenant data model and policy management
+- Add result caching and resilient retries/circuit-breakers around model calls
+- Add CI pipeline for lint/build/smoke tests and migration checks
+
 ## Agno Features Implemented / Explored
 
 The internal `agno-python` service uses a modular workflow design aligned with Agno-style agent responsibilities:
@@ -38,6 +97,40 @@ Operational features around this workflow:
 - Internal service protection using `X-Internal-Token`
 - OpenRouter model fallback and rate-limit handling
 - End-to-end audit trail in `query_audit_logs` and `query_audit_events` with stage-level metadata
+
+### Implemented Today
+
+- Workflow pipeline for retrieval -> SQL generation -> validation -> execution -> narration
+- Basic conversation context memory (short window)
+- Knowledge retrieval from `rag_documents`
+- Guardrails for SQL safety and scope control
+- Widget-oriented structured response output
+- Stage-wise observability in audit tables
+
+### Explored / Planned Next (Agno Expansion)
+
+- Rich memory layers:
+  - per-conversation memory
+  - per-user preference memory
+  - per-org policy memory
+- Tool expansion:
+  - document ingestion tools
+  - export/report tools
+  - metadata/schema introspection tools
+- Advanced guardrails:
+  - PII policy checks
+  - dynamic policy blocks by role/org
+  - risk scoring before execution
+- HITL (Human-in-the-Loop):
+  - approval queue for risky/high-impact SQL
+  - approve/reject workflow before DB execution
+- Prompt packs:
+  - org/role/user prompt blocks
+  - versioned prompt configuration without code changes
+- Evaluation and quality loop:
+  - capture interactions for quality review
+  - SQL/answer quality scoring
+  - dataset export for future tuning/model experiments
 
 ## Services
 

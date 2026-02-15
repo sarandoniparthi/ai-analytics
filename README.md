@@ -1,40 +1,48 @@
 # AI Analytics Copilot
 
-Minimal analytics copilot stack with role-scoped querying:
-- `frontend-nextjs` (UI): `http://localhost:3001`
-- `backend-nestjs` (API): `http://localhost:3000`
-- `agno-python` (internal-only service)
-- `postgres` (`pgvector/pgvector:pg16`) on `localhost:5433`
+Production-style analytics copilot with:
+- Next.js frontend
+- NestJS API gateway
+- Internal Agno/FastAPI workflow service
+- Postgres + pgvector + Pagila sample data
 
-## Database Diagram
+## Overview
 
-- Extended ER diagram: `DB_ERD.md`
-- Combined flow + ER diagrams: `ARCHITECTURE_DIAGRAMS.md`
+This project lets users ask natural language analytics questions with strict role/store scoping.  
+Backend enforces JWT scope, Agno enforces SQL guardrails, and all requests are audit logged.
 
-## 1) Start
+## Services
 
+- `frontend-nextjs` (public): `http://localhost:3001`
+- `backend-nestjs` (public): `http://localhost:3000`
+- `agno-python` (internal only): no host port
+- `postgres` (`pgvector/pgvector:pg16`): `localhost:5433`
+
+## Prerequisites
+
+- Docker + Docker Compose
+- Git
+- Pagila SQL files in repo root:
+  - `pagila-schema.sql`
+  - `pagila-data.sql`
+
+Download source:
+`https://www.postgresql.org/ftp/projects/pgFoundry/dbsamples/pagila/pagila/`
+
+## Quick Start
+
+1. Start services
 ```bash
 docker compose up -d --build
 ```
 
-## 2) Download Pagila Files
-
-Download into repo root:
-- `pagila-schema.sql`
-- `pagila-data.sql`
-
-Source:
-`https://www.postgresql.org/ftp/projects/pgFoundry/dbsamples/pagila/pagila/`
-
-## 3) Import Pagila (PowerShell)
-
+2. Import Pagila (PowerShell)
 ```powershell
 Get-Content .\pagila-schema.sql | docker compose exec -T postgres psql -U postgres -d pagila
 Get-Content .\pagila-data.sql | docker compose exec -T postgres psql -U postgres -d pagila
 ```
 
-## 4) Apply Project SQL (PowerShell)
-
+3. Apply project SQL (PowerShell)
 ```powershell
 Get-Content .\agno-python\sql\001_rag.sql | docker compose exec -T postgres psql -U postgres -d pagila
 Get-Content .\agno-python\sql\002_seed_rag.sql | docker compose exec -T postgres psql -U postgres -d pagila
@@ -44,64 +52,19 @@ Get-Content .\agno-python\sql\004_query_audit_enhancements.sql | docker compose 
 Get-Content .\agno-python\sql\005_auth_users_roles.sql | docker compose exec -T postgres psql -U postgres -d pagila
 ```
 
-## 5) Verify
+4. Open app
+- Login: `http://localhost:3001/login`
+- Analytics: `http://localhost:3001/analytics`
 
-```powershell
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT COUNT(*) FROM payment;"
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT COUNT(*) FROM rag_documents;"
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT store_id, COUNT(*), ROUND(SUM(amount)::numeric,2) FROM v_payment_scoped GROUP BY store_id ORDER BY store_id;"
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, conversation_id, status, error_stage, created_at FROM query_audit_logs ORDER BY id DESC LIMIT 10;"
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, log_id, stage, status, duration_ms, created_at FROM query_audit_events ORDER BY id DESC LIMIT 20;"
-```
+## Seed Login Users
 
-## 5.1) Backend Smoke Tests
-
-Run from `backend-nestjs`:
-
-```powershell
-npm run test:smoke
-```
-
-What is covered:
-- Login success (`manager_store1 / manager123`)
-- Login failure (wrong password)
-- JWT validation failure (invalid token -> `401`)
-- Store scope block (`manager_store1` requesting store `2` -> `403`)
-- Store scope allow (`manager_multi` can access store `2`)
-- Admin scope allow (`admin_user` not blocked by store scope)
-- Finance scope block for unassigned store (`finance_user` store `2` -> `403`)
-
-## 6) Use
-
-- UI: `http://localhost:3001`
-- API: `POST http://localhost:3000/api/ask`
-
-Example body:
-```json
-{
-  "question": "What is total revenue for my store 1?",
-  "role": "store_manager",
-  "store_id": 1
-}
-```
-
-## 7) Login (Simple UI)
-
-Login is available in UI and backend issues JWT on:
-- `POST /api/auth/login`
-
-UI behavior:
-- First screen is login-only.
-- Analytics UI is shown only after successful login.
-
-Seed users from `005_auth_users_roles.sql`:
 - `admin_user / admin123` (all stores)
 - `manager_store1 / manager123` (store 1)
 - `manager_multi / manager123` (stores 1,2)
 - `marketing_user / marketing123` (stores 1,2)
 - `finance_user / finance123` (store 1)
 
-## OpenRouter Env
+## Environment
 
 Set in `.env`:
 ```env
@@ -114,23 +77,84 @@ AGNO_TELEMETRY=false
 AGNO_DISABLE_TELEMETRY=true
 PHI_TELEMETRY=false
 JWT_SECRET=change-me
+INTERNAL_TOKEN=change-me
 ```
 
-## JWT-based User Context
+## API Usage
 
-Frontend logs in once and stores JWT; each `/api/ask` call forwards:
-- `Authorization: Bearer <token>`
+- Login: `POST /api/auth/login`
+- Ask: `POST /api/ask`
 
-Backend verifies token with `JWT_SECRET` and derives these fields from claims (overrides body):
-- `role`
-- `store_id`
-- `user_id` (or `sub`)
-- `store_ids` + `is_all_stores` (for store-scope enforcement)
+Example ask payload:
+```json
+{
+  "question": "What is total revenue for my store 1?",
+  "role": "store_manager",
+  "store_id": 1
+}
+```
 
-`org_id` is currently defaulted to `default-org` and can be replaced later with tenant mapping tables.
+## Diagnostics
 
-Supported roles:
-- `admin`
-- `store_manager`
-- `marketing`
-- `finance`
+Quick checks:
+```powershell
+docker compose ps
+docker compose logs --tail=100 backend-nestjs
+docker compose logs --tail=100 agno-python
+docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT COUNT(*) FROM payment;"
+docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT COUNT(*) FROM rag_documents;"
+docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, conversation_id, status, error_stage, created_at FROM query_audit_logs ORDER BY id DESC LIMIT 10;"
+docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, log_id, stage, status, duration_ms, created_at FROM query_audit_events ORDER BY id DESC LIMIT 20;"
+```
+
+## Testing
+
+Backend smoke tests (from `backend-nestjs`):
+```powershell
+npm run test:smoke
+```
+
+Coverage includes:
+- login success/failure
+- invalid JWT rejection
+- store scope enforcement
+- admin all-store behavior
+- multi-store manager behavior
+- finance scope restrictions
+
+## Architecture Flow Diagram
+
+```mermaid
+flowchart LR
+    U["User (Browser)"] --> F["Next.js UI (3001)"]
+    F --> P["Next.js API Proxy /api/ask"]
+    P --> B["NestJS API (3000) POST /api/ask"]
+    B --> C["Build user_context from JWT\n(role, store scope, allowed_views)"]
+    C --> A["Agno FastAPI (internal) POST /run"]
+
+    A --> T["Validate X-Internal-Token"]
+    A --> R["RAG retrieval from rag_documents (pgvector)"]
+    R --> L["OpenRouter SQL generation"]
+    L --> V["SQL guardrails\nSELECT-only, views-only, LIMIT 200"]
+    V --> D["Execute SQL in Postgres"]
+    D --> W["Build answer + widgets + explain + security"]
+    W --> Q["Write query_audit_logs + query_audit_events"]
+
+    Q --> B
+    B --> P
+    P --> F
+```
+
+## Failure Points (Troubleshooting)
+
+1. `401 Invalid JWT token`: re-login, verify `JWT_SECRET`.
+2. `403 Requested store is outside your access scope`: choose assigned store.
+3. `401 Invalid internal token`: sync `INTERNAL_TOKEN` across backend and agno.
+4. `429` / `402` from OpenRouter: retry, switch model, check provider limits.
+5. SQL validator block (`View not allowed`, `Only SELECT/CTE`): use role-scoped read-only prompts.
+6. `500 Database execution failed`: verify Pagila import and SQL migration order.
+
+## Diagrams
+
+- Combined flow + ER: `ARCHITECTURE_DIAGRAMS.md`
+- ER-focused: `DB_ERD.md`

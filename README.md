@@ -267,6 +267,19 @@ docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, log_id
 - `View not allowed` or `Only SELECT/CTE`: prompt is outside role/view scope.
 - `Database execution failed`: recheck Pagila import and migration order.
 
+## Enhancements
+
+- Move `WorkflowMemory` to a durable store (Postgres/Redis) so context survives restarts.
+- Add SQL repair loop agent: on validator failure, regenerate query with structured error feedback.
+- Introduce per-role prompt packs in DB for runtime prompt tuning without code changes.
+- Add fallback question suggestions by role when a query is blocked, empty, or ambiguous.
+- Show simplified related questions after each answer (based on user question + result columns) to guide the next step.
+- Add model routing policy by request type (cheap model for planner, stronger model for SQL).
+- Add API-level regression tests for `/api/ask` response schema and guardrail behavior.
+- Add observability dashboards from `query_audit_logs` and `query_audit_events` (latency, error stage, model fallback rate).
+- Add tenant-aware security model (`org_id` scoping) beyond current default-org flow.
+- Add caching for repeated analytics questions with short TTL and scope-safe cache keys.
+
 ## Additional Docs
 
 - `ARCHITECTURE_DIAGRAMS.md`

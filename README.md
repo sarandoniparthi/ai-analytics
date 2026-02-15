@@ -1,286 +1,274 @@
 # AI Analytics Copilot
 
-Production-style analytics copilot with:
-- Next.js frontend
-- NestJS API gateway
-- Internal Agno/FastAPI workflow service
-- Postgres + pgvector + Pagila sample data
+Role-aware analytics copilot built on a three-service architecture:
+- `frontend-nextjs`: Next.js UI + API proxy
+- `backend-nestjs`: public API gateway, auth, scope enforcement
+- `agno-python`: internal FastAPI workflow (RAG, SQL generation/validation/execution)
+- `postgres` (`pgvector/pg16`) with Pagila sample data
 
-## Overview
+## Architecture
 
-This project starts with the PostgreSQL Pagila sample database and extends it into a real-world analytics copilot use case.  
-It adds role-aware access control, scoped analytics views, JWT-based API authorization, RAG context with pgvector, SQL safety guardrails, and end-to-end audit logging.  
-The result is a practical reference architecture for turning sample relational data into a secure AI analytics workflow.
+Request flow:
+1. User logs in via `POST /api/auth/login`.
+2. UI calls `POST /api/ask` with JWT.
+3. NestJS derives role/store scope from JWT and forwards internal request to Agno.
+4. Agno retrieves RAG context, generates SQL, validates SQL, executes against Postgres, and returns structured response.
 
-## Project Context
+Service ports:
+- Frontend: `http://localhost:3001`
+- Backend: `http://localhost:3000`
+- Postgres: `localhost:5433`
+- Agno: internal-only (no host port mapping)
 
-### Business Use Case
+## Screenshots
 
-From sample DVD rental data to a multi-role analytics assistant:
-- `admin`: cross-store revenue, rental, and masked customer analysis
-- `store_manager`: store-level payments and rentals for assigned stores
-- `marketing`: masked customer segmentation/trends without payment-level exposure
-- `finance`: payment and revenue-focused reporting
+### Login
+![Login screen](docs/screenshots/login.png)
 
-### Data Model Extensions Over Pagila
+### Analytics Dashboard
+![Analytics dashboard](docs/screenshots/analyticsask.png)
 
-Added on top of sample schema:
-- Scoped views: `v_payment_scoped`, `v_rental_scoped`, `v_customer_masked`
-- RAG store: `rag_documents` (pgvector embeddings)
-- Access control: `app_users`, `app_user_store_access`
-- Audit/trace: `query_audit_logs`, `query_audit_events`
+### Result with Widgets
+![Query result with widgets](docs/screenshots/analytics_results.png)
 
-### Security Model
+## Repository Layout
 
-- JWT claims used by backend: `user_id`, `role`, `store_ids`, `is_all_stores`
-- Backend enforces store scope for every `/api/ask` request
-- Agno internal endpoint protected by `X-Internal-Token`
-- Current PII protection:
-  - customer names are exposed only via masked view fields (`first_name_masked`, `last_name_masked`) in `v_customer_masked`
-  - marketing role is restricted to masked customer view
-  - SQL guardrails restrict queries to role-allowed scoped views
-- PII policy engine is planned as the next enhancement (keyword/column checks + audit decision logging)
-- SQL guardrails enforce:
-  - single statement
-  - `SELECT` / `WITH ... SELECT` only
-  - allowed views only
-  - `LIMIT 200` maximum
-
-### Prompting Strategy
-
-- UI provides role-based prompt suggestions mapped to role-allowed views
-- In-scope prompts are designed to produce safe executable SQL
-- Out-of-scope prompts are blocked with clear validation/scope errors
-
-### RAG Strategy
-
-- Seeded docs include schema hints, metric glossary, governance/safety rules, and widget hints
-- Retrieval context is injected before SQL generation to reduce hallucinations and improve view selection
-
-### Observability and Audit
-
-- `conversation_id` is created at API entry and propagated end-to-end
-- Each workflow stage writes audit events (`rag_retrieval`, `llm_generation`, `validation`, `db_execution`, `completed`)
-- Final response, SQL, timings, and error metadata are persisted for troubleshooting
-
-### Known Limitations
-
-- Free OpenRouter models can hit rate/spend limits (`429` / `402`)
-- SQL generation can still need deterministic fallback/rewrite for edge cases
-- Pagila is sample data and does not represent full production domain complexity
-
-### Production Hardening Next Steps
-
-- Replace seed login with real identity provider (OIDC/SAML) and RBAC service
-- Introduce explicit org/tenant data model and policy management
-- Add result caching and resilient retries/circuit-breakers around model calls
-- Add CI pipeline for lint/build/smoke tests and migration checks
-
-## Agno Features Implemented / Explored
-
-The internal `agno-python` service uses a modular workflow design aligned with Agno-style agent responsibilities:
-
-- `SchemaRagAgent` and `KnowledgeAgent`
-  - Retrieve and format context from `rag_documents` (pgvector-backed retrieval)
-- `PlannerAgent`
-  - Classifies intent (kpi/trend/ranking/distribution/comparison) for response shaping
-- `SQLAgent`
-  - Generates SQL via OpenRouter (primary + fallback model support)
-  - Supports conversation-aware context via lightweight memory history
-- `Validator`
-  - Enforces SQL safety before execution
-- `DBTool`
-  - Executes validated SQL against Postgres
-- `InsightAgent` and `NarratorAgent`
-  - Summarize result rows into user-facing explanation
-- `WidgetAgent`
-  - Produces visualization-ready widget payloads (table/metric/bar/line/pie)
-
-Operational features around this workflow:
-- Role/store scoped querying using allowed views
-- Strict SQL guardrails (SELECT/CTE, one statement, forbidden keyword block, LIMIT enforcement)
-- Internal service protection using `X-Internal-Token`
-- OpenRouter model fallback and rate-limit handling
-- End-to-end audit trail in `query_audit_logs` and `query_audit_events` with stage-level metadata
-
-### Implemented Today
-
-- Workflow pipeline for retrieval -> SQL generation -> validation -> execution -> narration
-- Basic conversation context memory (short window)
-- Knowledge retrieval from `rag_documents`
-- Guardrails for SQL safety and scope control
-- Widget-oriented structured response output
-- Stage-wise observability in audit tables
-
-### Explored / Planned Next (Agno Expansion)
-
-- Rich memory layers:
-  - per-conversation memory
-  - per-user preference memory
-  - per-org policy memory
-- Tool expansion:
-  - document ingestion tools
-  - export/report tools
-  - metadata/schema introspection tools
-- Advanced guardrails:
-  - PII policy checks
-  - dynamic policy blocks by role/org
-  - risk scoring before execution
-- HITL (Human-in-the-Loop):
-  - approval queue for risky/high-impact SQL
-  - approve/reject workflow before DB execution
-- Prompt packs:
-  - org/role/user prompt blocks
-  - versioned prompt configuration without code changes
-- Evaluation and quality loop:
-  - capture interactions for quality review
-  - SQL/answer quality scoring
-  - dataset export for future tuning/model experiments
-
-## Services
-
-- `frontend-nextjs` (public): `http://localhost:3001`
-- `backend-nestjs` (public): `http://localhost:3000`
-- `agno-python` (internal only): no host port
-- `postgres` (`pgvector/pgvector:pg16`): `localhost:5433`
+- `frontend-nextjs/app/page.tsx`: landing page
+- `frontend-nextjs/app/login/page.tsx`: login UI
+- `frontend-nextjs/app/analytics/page.tsx`: analytics chat + widgets UI
+- `frontend-nextjs/app/api/ask/route.ts`: frontend proxy to backend
+- `backend-nestjs/src/auth.controller.ts`: login endpoint
+- `backend-nestjs/src/chat.controller.ts`: ask endpoint
+- `agno-python/app/main.py`: `/run` workflow endpoint
+- `agno-python/app/sql_validator.py`: SQL safety guardrails
+- `agno-python/sql/*.sql`: migrations, scoped views, audit tables, seed users
 
 ## Prerequisites
 
 - Docker + Docker Compose
-- Git
+- PowerShell (examples below)
 - Pagila SQL files in repo root:
   - `pagila-schema.sql`
   - `pagila-data.sql`
 
-Download source:
-`https://www.postgresql.org/ftp/projects/pgFoundry/dbsamples/pagila/pagila/`
+Pagila source: `https://www.postgresql.org/ftp/projects/pgFoundry/dbsamples/pagila/pagila/`
 
-## Quick Start
+## Environment Setup
 
-1. Start services
-```bash
+1. Copy environment file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. Update at least:
+- `OPENROUTER_API_KEY`
+- `JWT_SECRET`
+- `INTERNAL_TOKEN`
+
+Important: keep `INTERNAL_TOKEN` identical for `backend-nestjs` and `agno-python`.
+
+## Start the Stack
+
+```powershell
 docker compose up -d --build
 ```
 
-2. Import Pagila (PowerShell)
+Dev mode (hot reload):
+
 ```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+## Database Initialization
+
+Run in this order after containers are up:
+
+```powershell
+# 1) Base Pagila schema + data
 Get-Content .\pagila-schema.sql | docker compose exec -T postgres psql -U postgres -d pagila
-Get-Content .\pagila-data.sql | docker compose exec -T postgres psql -U postgres -d pagila
+Get-Content .\pagila-data.sql   | docker compose exec -T postgres psql -U postgres -d pagila
+
+# 2) Project migrations
+$files = @(
+  '.\agno-python\sql\001_rag.sql',
+  '.\agno-python\sql\002_seed_rag.sql',
+  '.\agno-python\sql\002_scoped_views.sql',
+  '.\agno-python\sql\003_query_audit_logs.sql',
+  '.\agno-python\sql\004_query_audit_enhancements.sql',
+  '.\agno-python\sql\005_auth_users_roles.sql'
+)
+
+foreach ($f in $files) {
+  Get-Content $f | docker compose exec -T postgres psql -U postgres -d pagila
+}
 ```
 
-3. Apply project SQL (PowerShell)
-```powershell
-Get-Content .\agno-python\sql\001_rag.sql | docker compose exec -T postgres psql -U postgres -d pagila
-Get-Content .\agno-python\sql\002_seed_rag.sql | docker compose exec -T postgres psql -U postgres -d pagila
-Get-Content .\agno-python\sql\002_scoped_views.sql | docker compose exec -T postgres psql -U postgres -d pagila
-Get-Content .\agno-python\sql\003_query_audit_logs.sql | docker compose exec -T postgres psql -U postgres -d pagila
-Get-Content .\agno-python\sql\004_query_audit_enhancements.sql | docker compose exec -T postgres psql -U postgres -d pagila
-Get-Content .\agno-python\sql\005_auth_users_roles.sql | docker compose exec -T postgres psql -U postgres -d pagila
-```
+## Seed Users
 
-4. Open app
-- Login: `http://localhost:3001/login`
-- Analytics: `http://localhost:3001/analytics`
-
-## Seed Login Users
+Created by `agno-python/sql/005_auth_users_roles.sql`:
 
 - `admin_user / admin123` (all stores)
 - `manager_store1 / manager123` (store 1)
-- `manager_multi / manager123` (stores 1,2)
-- `marketing_user / marketing123` (stores 1,2)
+- `manager_multi / manager123` (stores 1 and 2)
+- `marketing_user / marketing123` (stores 1 and 2)
 - `finance_user / finance123` (store 1)
 
-## Environment
+## Using the App
 
-Set in `.env`:
-```env
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_API_KEY=your_key_here
-OPENROUTER_MODEL=meta-llama/llama-3.2-3b-instruct:free
-OPENROUTER_FALLBACK_MODELS=google/gemma-2-9b-it:free,microsoft/phi-3-mini-128k-instruct:free,qwen/qwen2.5-7b-instruct:free
-AGNO_TIMEOUT_MS=45000
-AGNO_TELEMETRY=false
-AGNO_DISABLE_TELEMETRY=true
-PHI_TELEMETRY=false
-JWT_SECRET=change-me
-INTERNAL_TOKEN=change-me
-```
+- Login page: `http://localhost:3001/login`
+- Analytics page: `http://localhost:3001/analytics`
 
-## API Usage
+## API Reference
 
-- Login: `POST /api/auth/login`
-- Ask: `POST /api/ask`
+### `POST /api/auth/login`
 
-Example ask payload:
+Request:
+
 ```json
 {
-  "question": "What is total revenue for my store 1?",
+  "username": "manager_store1",
+  "password": "manager123"
+}
+```
+
+Response:
+
+```json
+{
+  "token": "<jwt>",
+  "user": {
+    "user_id": "2",
+    "username": "manager_store1",
+    "role": "store_manager",
+    "store_ids": [1],
+    "is_all_stores": false,
+    "org_id": "default-org"
+  }
+}
+```
+
+### `POST /api/ask`
+
+Headers:
+- `Authorization: Bearer <jwt>`
+
+Request:
+
+```json
+{
+  "question": "What is total revenue for store 1?",
   "role": "store_manager",
   "store_id": 1
 }
 ```
 
-## Diagnostics
+Notes:
+- JWT claims override request body scope where provided.
+- `conversation_id` is auto-generated if omitted.
 
-Quick checks:
+Example response shape:
+
+```json
+{
+  "conversation_id": "<uuid>",
+  "answer": "...",
+  "insights": ["..."],
+  "followups": ["..."],
+  "intent": "kpi",
+  "sql": { "query": "SELECT ... LIMIT 200" },
+  "widgets": [],
+  "explain": {
+    "views_used": ["v_payment_scoped"],
+    "notes": "SQL built with RAG context + LLM, then validated by strict safety rules."
+  },
+  "security": {
+    "role": "store_manager",
+    "store_id": 1,
+    "rls": true,
+    "allowed_views": ["v_payment_scoped", "v_rental_scoped"]
+  },
+  "lineage": {
+    "views": ["v_payment_scoped"],
+    "filters": ["role_scope", "store_scope"]
+  },
+  "meta": {
+    "rows": 1,
+    "exec_ms": 45,
+    "model": "meta-llama/llama-3.2-3b-instruct:free",
+    "confidence": "medium"
+  }
+}
+```
+
+## Security and Guardrails
+
+- Internal service protection: every `/run` call requires `X-Internal-Token`.
+- SQL validator enforces:
+  - single statement only
+  - `SELECT` / `WITH ... SELECT` only
+  - allowed view list per role
+  - forbidden write/DDL keywords blocked
+  - max `LIMIT 200`
+- Role-to-view mapping in backend:
+  - `admin`: `v_payment_scoped`, `v_customer_masked`, `v_rental_scoped`
+  - `store_manager`: `v_payment_scoped`, `v_rental_scoped`
+  - `marketing`: `v_customer_masked`
+  - `finance`: `v_payment_scoped`
+
+## Verification and Smoke Tests
+
+Required checks:
+
+1. Services start:
+
 ```powershell
+docker compose up -d --build
 docker compose ps
-docker compose logs --tail=100 backend-nestjs
-docker compose logs --tail=100 agno-python
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT COUNT(*) FROM payment;"
-docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT COUNT(*) FROM rag_documents;"
+```
+
+2. Ask endpoint returns structured payload:
+- Log in with seeded user
+- Call `POST /api/ask` with JWT
+- Confirm response includes: `answer`, `sql`, `widgets`, `security`, `meta`
+
+3. SQL validator blocks unsafe SQL:
+- Use a prompt that attempts non-read query (for example, "delete all payments")
+- Confirm rejection from validator
+
+Smoke test suite (backend):
+
+```powershell
+docker compose exec backend-nestjs npm run test:smoke
+```
+
+## Useful Commands
+
+```powershell
+# Tail service logs
+docker compose logs -f agno-python backend-nestjs frontend-nextjs
+
+# Python syntax check
+python -m compileall agno-python/app
+
+# Recent audit logs
 docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, conversation_id, status, error_stage, created_at FROM query_audit_logs ORDER BY id DESC LIMIT 10;"
+
+# Recent audit events
 docker compose exec -T postgres psql -U postgres -d pagila -c "SELECT id, log_id, stage, status, duration_ms, created_at FROM query_audit_events ORDER BY id DESC LIMIT 20;"
 ```
 
-## Testing
+## Common Failures
 
-Backend smoke tests (from `backend-nestjs`):
-```powershell
-npm run test:smoke
-```
+- `401 Invalid JWT token`: login again; verify `JWT_SECRET` consistency.
+- `403 Requested store is outside your access scope`: choose a permitted store.
+- `401 Invalid internal token`: sync `INTERNAL_TOKEN` across services.
+- `429` or `402` from model provider: check OpenRouter limits/key/model availability.
+- `View not allowed` or `Only SELECT/CTE`: prompt is outside role/view scope.
+- `Database execution failed`: recheck Pagila import and migration order.
 
-Coverage includes:
-- login success/failure
-- invalid JWT rejection
-- store scope enforcement
-- admin all-store behavior
-- multi-store manager behavior
-- finance scope restrictions
+## Additional Docs
 
-## Architecture Flow Diagram
-
-```mermaid
-flowchart LR
-    U["User (Browser)"] --> F["Next.js UI (3001)"]
-    F --> P["Next.js API Proxy /api/ask"]
-    P --> B["NestJS API (3000) POST /api/ask"]
-    B --> C["Build user_context from JWT\n(role, store scope, allowed_views)"]
-    C --> A["Agno FastAPI (internal) POST /run"]
-
-    A --> T["Validate X-Internal-Token"]
-    A --> R["RAG retrieval from rag_documents (pgvector)"]
-    R --> L["OpenRouter SQL generation"]
-    L --> V["SQL guardrails\nSELECT-only, views-only, LIMIT 200"]
-    V --> D["Execute SQL in Postgres"]
-    D --> W["Build answer + widgets + explain + security"]
-    W --> Q["Write query_audit_logs + query_audit_events"]
-
-    Q --> B
-    B --> P
-    P --> F
-```
-
-## Failure Points (Troubleshooting)
-
-1. `401 Invalid JWT token`: re-login, verify `JWT_SECRET`.
-2. `403 Requested store is outside your access scope`: choose assigned store.
-3. `401 Invalid internal token`: sync `INTERNAL_TOKEN` across backend and agno.
-4. `429` / `402` from OpenRouter: retry, switch model, check provider limits.
-5. SQL validator block (`View not allowed`, `Only SELECT/CTE`): use role-scoped read-only prompts.
-6. `500 Database execution failed`: verify Pagila import and SQL migration order.
-
-## Diagrams
-
-- Combined flow + ER: `ARCHITECTURE_DIAGRAMS.md`
-- ER-focused: `DB_ERD.md`
+- `ARCHITECTURE_DIAGRAMS.md`
+- `DB_ERD.md`
+- `FLOW.md`

@@ -35,6 +35,11 @@ Added on top of sample schema:
 - JWT claims used by backend: `user_id`, `role`, `store_ids`, `is_all_stores`
 - Backend enforces store scope for every `/api/ask` request
 - Agno internal endpoint protected by `X-Internal-Token`
+- Current PII protection:
+  - customer names are exposed only via masked view fields (`first_name_masked`, `last_name_masked`) in `v_customer_masked`
+  - marketing role is restricted to masked customer view
+  - SQL guardrails restrict queries to role-allowed scoped views
+- PII policy engine is planned as the next enhancement (keyword/column checks + audit decision logging)
 - SQL guardrails enforce:
   - single statement
   - `SELECT` / `WITH ... SELECT` only

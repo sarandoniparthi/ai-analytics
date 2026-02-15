@@ -8,8 +8,36 @@ Production-style analytics copilot with:
 
 ## Overview
 
-This project lets users ask natural language analytics questions with strict role/store scoping.  
-Backend enforces JWT scope, Agno enforces SQL guardrails, and all requests are audit logged.
+This project starts with the PostgreSQL Pagila sample database and extends it into a real-world analytics copilot use case.  
+It adds role-aware access control, scoped analytics views, JWT-based API authorization, RAG context with pgvector, SQL safety guardrails, and end-to-end audit logging.  
+The result is a practical reference architecture for turning sample relational data into a secure AI analytics workflow.
+
+## Agno Features Implemented / Explored
+
+The internal `agno-python` service uses a modular workflow design aligned with Agno-style agent responsibilities:
+
+- `SchemaRagAgent` and `KnowledgeAgent`
+  - Retrieve and format context from `rag_documents` (pgvector-backed retrieval)
+- `PlannerAgent`
+  - Classifies intent (kpi/trend/ranking/distribution/comparison) for response shaping
+- `SQLAgent`
+  - Generates SQL via OpenRouter (primary + fallback model support)
+  - Supports conversation-aware context via lightweight memory history
+- `Validator`
+  - Enforces SQL safety before execution
+- `DBTool`
+  - Executes validated SQL against Postgres
+- `InsightAgent` and `NarratorAgent`
+  - Summarize result rows into user-facing explanation
+- `WidgetAgent`
+  - Produces visualization-ready widget payloads (table/metric/bar/line/pie)
+
+Operational features around this workflow:
+- Role/store scoped querying using allowed views
+- Strict SQL guardrails (SELECT/CTE, one statement, forbidden keyword block, LIMIT enforcement)
+- Internal service protection using `X-Internal-Token`
+- OpenRouter model fallback and rate-limit handling
+- End-to-end audit trail in `query_audit_logs` and `query_audit_events` with stage-level metadata
 
 ## Services
 

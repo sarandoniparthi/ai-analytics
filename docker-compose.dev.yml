@@ -1,0 +1,23 @@
+services:
+  agno-python:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./agno-python/app:/app/app
+      - ./agno-python/sql:/app/sql
+
+  backend-nestjs:
+    command: npm run start:dev
+    volumes:
+      - ./backend-nestjs:/app
+      - /app/node_modules
+    environment:
+      TS_NODE_TRANSPILE_ONLY: "true"
+
+  frontend-nextjs:
+    command: npm run dev
+    volumes:
+      - ./frontend-nextjs:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      WATCHPACK_POLLING: "true"

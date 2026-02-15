@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pagila
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pagila"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app-network
+
+  agno-python:
+    build:
+      context: ./agno-python
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-pagila}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-change-me}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.2-3b-instruct:free}
+      OPENROUTER_FALLBACK_MODELS: ${OPENROUTER_FALLBACK_MODELS:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      AGNO_TELEMETRY: ${AGNO_TELEMETRY:-false}
+      AGNO_DISABLE_TELEMETRY: ${AGNO_DISABLE_TELEMETRY:-true}
+      PHI_TELEMETRY: ${PHI_TELEMETRY:-false}
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app-network
+
+  backend-nestjs:
+    build:
+      context: ./backend-nestjs
+    ports:
+      - "3000:3000"
+    depends_on:
+      agno-python:
+        condition: service_healthy
+    environment:
+      AGNO_URL: http://agno-python:8000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-change-me}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-pagila}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    networks:
+      - app-network
+
+  frontend-nextjs:
+    build:
+      context: ./frontend-nextjs
+    ports:
+      - "3001:3000"
+    depends_on:
+      backend-nestjs:
+        condition: service_started
+    environment:
+      BACKEND_BASE_URL: http://backend-nestjs:3000
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:3000
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
